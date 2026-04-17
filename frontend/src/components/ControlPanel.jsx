@@ -1,21 +1,30 @@
+import { useState } from "react";
 import { runExperiment } from "../api";
 
 export default function ControlPanel({ setResult, setHistory }) {
 
+  const [lr, setLr] = useState(0.001);
+  const [batch, setBatch] = useState(32);
+
   const run = async () => {
-    const params = {
-      lr: 0.001,
-      batch: 32
-    };
+    const params = { lr, batch, filters: 32 };
 
     const res = await runExperiment(params);
+
     setResult(res);
     setHistory(prev => [res, ...prev]);
   };
 
   return (
-    <div style={{ width: "250px", padding: "20px", borderRight: "1px solid gray" }}>
+    <div>
       <h3>控制面板</h3>
+
+      <label>LR:</label>
+      <input value={lr} onChange={e=>setLr(Number(e.target.value))} />
+
+      <label>Batch:</label>
+      <input value={batch} onChange={e=>setBatch(Number(e.target.value))} />
+
       <button onClick={run}>🚀 Run</button>
     </div>
   );
