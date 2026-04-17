@@ -1,16 +1,3 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from experiment import run_experiment
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 @app.post("/run")
 def run(params: dict):
     result = run_experiment(params)
@@ -18,8 +5,10 @@ def run(params: dict):
     return {
         "params": params,
         "metrics": {
-            "accuracy": result["accuracy"]
+            "accuracy": result["accuracy"],
+            "sharpe": result["sharpe"]
         },
+        "equity_curve": result["equity"],
         "history": {
             "loss": result["loss"],
             "val_loss": result["val_loss"]
