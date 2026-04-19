@@ -6,11 +6,20 @@ import MetricsPanel from './components/MetricsPanel'
 import PredictionPanel from './components/PredictionPanel'
 
 const API = import.meta.env.VITE_API_URL || ''
-const WS_BASE = import.meta.env.VITE_WS_URL || (
-  typeof window !== 'undefined'
-    ? `ws://${window.location.hostname}:8000`
-    : 'ws://localhost:8000'
-)
+
+// WS_BASE: 優先用 VITE_WS_URL；若沒設定，從 VITE_API_URL 自動推導
+// https://xxx.onrender.com  →  wss://xxx.onrender.com
+// http://localhost:8000     →  ws://localhost:8000
+function deriveWsBase() {
+  if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+      .replace(/^https:\/\//, 'wss://')
+      .replace(/^http:\/\//, 'ws://')
+  }
+  return 'ws://localhost:8000'
+}
+const WS_BASE = deriveWsBase()
 
 const DEFAULT_CONFIG = {
   conv_layers: 2, kernel_size: 5, dropout: 0.3,
@@ -86,13 +95,21 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       })
+      if (!res.ok) {
+        const err = await res.text()
+        throw new Error(`POST /train 失敗 (${res.status}): ${err}`)
+      }
       const { job_id } = await res.json()
       setJobId(job_id)
       addLog(`[INFO] 訓練任務啟動 job_id=${job_id}`)
+      addLog(`[INFO] 連接 WebSocket: ${WS_BASE}/api/ws/${job_id}`)
 
       // 連接 WebSocket
-      const ws = new WebSocket(`${WS_BASE}/api/ws/${job_id}`)
+      const wsUrl = `${WS_BASE}/api/ws/${job_id}`
+      const ws = new WebSocket(wsUrl)
       wsRef.current = ws
+
+      ws.onopen = () => addLog('[INFO] WebSocket 已連線')
 
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data)
@@ -101,18 +118,26 @@ export default function App() {
         if (event === 'ping') return
 
         if (event === 'status') {
-          addLog(`[${event.toUpperCase()}] ${message || JSON.stringify(data)}`)
+          addLog(`[STATUS] ${message || JSON.stringify(data)}`)
         }
         if (event === 'model_info') {
           setModelInfo(data)
           addLog(`[MODEL] 參數量: ${data.param_count?.toLocaleString()} | 裝置: ${data.device}`)
         }
         if (event === 'epoch') {
-          setChartData(prev => [...prev, { epoch: data.epoch, train_loss: data.train_loss, val_loss: data.val_loss, accuracy: data.accuracy }])
-          addLog(`[${String(data.epoch).padStart(3,'0')}/${data.total_epochs}] loss=${data.train_loss} val_loss=${data.val_loss} acc=${(data.accuracy*100).toFixed(1)}% (${data.elapsed_sec}s)`)
+          setChartData(prev => [...prev, {
+            epoch: data.epoch,
+            train_loss: data.train_loss,
+            val_loss: data.val_loss,
+            accuracy: data.accuracy
+          }])
+          addLog(`[${String(data.epoch).padStart(3,'0')}/${data.total_epochs}] loss=${data.train_loss} val=${data.val_loss} acc=${(data.accuracy*100).toFixed(1)}% (${data.elapsed_sec}s)`)
         }
         if (event === 'done') {
-          setFinalMetrics({ confusionMatrix: data.confusion_matrix, reportDict: data.classification_report })
+          setFinalMetrics({
+            confusionMatrix: data.confusion_matrix,
+            reportDict: data.classification_report
+          })
           setReportMd(data.report_md || '')
           addLog(`[DONE] ✓ 最終準確率: ${(data.final_accuracy * 100).toFixed(2)}%`)
           setIsTraining(false)
@@ -127,8 +152,16 @@ export default function App() {
           setIsTraining(false)
         }
       }
-      ws.onerror = () => { addLog('[ERROR] WebSocket 連線失敗'); setIsTraining(false) }
-      ws.onclose = () => { if (isTraining) addLog('[WS] 連線關閉') }
+
+      ws.onerror = (e) => {
+        addLog(`[ERROR] WebSocket 連線失敗 — 請確認 VITE_WS_URL 是否設定正確`)
+        addLog(`[DEBUG] 嘗試連線到: ${wsUrl}`)
+        setIsTraining(false)
+      }
+
+      ws.onclose = (e) => {
+        if (e.code !== 1000) addLog(`[WS] 連線關閉 code=${e.code}`)
+      }
 
     } catch (err) {
       addLog(`[ERROR] ${err.message}`)
